@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# Helper for yglu to assist with importing yaml files into the document
+# root.
+#
+# Depends: yglu - https://github.com/lbovet/yglu/
+#
+# Copyright (c) 2020-2021 Maddison Hellstrom <github.com/b0o>, MIT License.
+
+set -euo pipefail
+
+declare base basename
+
+base="$(realpath "${BASH_SOURCE[0]}")"
+basename="$(basename "$base")"
+
+declare -ga tmpfiles=()
+
+declare -gi merge_lists=0
+
+function usage() {
+  echo "usage: $basename [-h] [[<template> <dest>] ...]" >&2
+}
+
+function process_template() {
+  [[ $# -lt 2 ]] && {
+    echo "process_template: expected 2 args, got $#" >&2
+    return 1
+  }
+
+  local template="$1"
+  local dest="$2"
+
+  local tmp_template
+  local tmp_dest
+  tmp_template="$(mktemp "$(basename "$template")-XXXXXX")" || {
+    echo "error making temp file" >&2
+    return 1
+  }
+  tmpfiles+=("$tmp_template")
+  tmp_dest="$(mktemp "$(basename "$template")-XXXXXX")" || {
+    echo "error making temp file" >&2
+    return 1
+  }
+  tmpfiles+=("$tmp_dest")
+
+  local -a yglu_import
+  mapfile -t yglu_import << "EOF"
+# Merge imports with each other
+# primitives, lists: replace, later take precedence
+# dicts:             merge, contained primitives and lists handled as above
+_imported: !-
+  !for ($_._import)({}): !()
+    !for $.items(): !()
+EOF
+
+  if [[ $merge_lists -eq 1 ]]; then
+    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+      !? $[0]: !? ({result => $[1]}).mergeWith({result => $_._imported.get($[0], null)}, $2 + $1, $1).get("result", null)
+EOF
+  else
+    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+      !if isDict($[1]):
+        !? $[0]: !? ({result => $[1]}).mergeWith({result => $_._imported.get($[0], null)}, $1, $1).get("result", null)
+      !if not isDict($[1]):
+        !? $[0]: !? $[1]
+EOF
+  fi
+
+  mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+# Merge aggregated imports with document root
+# primitives, lists: values in document root take precedence
+# dicts:             merge, values in document root take precedence, contained primitives and lists handled as above
+!for $_._imported.items(): !()
+  !if $_.get($[0], null) = null:
+    !? $[0]: !? $[1]
+  !if $_.get($[0], null) != null:
+    !if not ($_.containsKey("_merge_skip") and $_._merge_skip.toList().contains($[0])):
+EOF
+
+  if [[ $merge_lists -eq 1 ]]; then
+    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+      !? $[0]: !? ({result => $_.get($[0], null)}).mergeWith({result => $[1]}, $2 + $1, $1).get("result", null)
+EOF
+  else
+    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+    !if isDict($[1]):
+      !? $[0]: !? ({result => $_.get($[0], null)}).mergeWith({result => $[1]}, $1, $1).get("result", null)
+EOF
+  fi
+
+  awk -v "import=$(printf '%s\n' "${yglu_import[@]}")" \
+    '/^_import:\s+!\(\)\s*$/ { print import "\n" }; //{ print $0 }' "$1" \
+    > "$tmp_template"
+
+  yglu "$tmp_template" > "$tmp_dest" || {
+    echo "yglu failed" >&2
+    return 1
+  }
+
+  cat "$tmp_dest" > "$dest"
+  return
+}
+
+function main() {
+  local -a templates=()
+  local -a dests=()
+
+  local opts_ok=1
+
+  while [[ $# -gt 0 ]]; do
+    [[ "$1" =~ ^- ]] && {
+      [[ $opts_ok -eq 0 ]] && {
+        echo "unexpected option $1" >&2
+        usage
+        exit 1
+      }
+      case "$1" in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --merge-lists)
+        merge_lists=1
+        ;;
+      *)
+        echo "unknown option $1" >&2
+        usage
+        exit 1
+        ;;
+      esac
+      shift
+      continue
+    }
+    opts_ok=0
+    if [[ ${#templates[@]} -eq ${#dests[@]} ]]; then
+      templates+=("$1")
+    else
+      dests+=("$1")
+    fi
+    shift
+  done
+
+  [[ ${#templates[@]} -ne ${#dests[@]} ]] && {
+    usage
+    exit 1
+  }
+
+  [[ ${#templates[@]} -eq 0 && ${#dests[@]} -eq 0 ]] && {
+    mapfile -t templates <<< "$(find . -maxdepth 1 -type f -name '*.yglu.yml' -printf '%f\n')"
+    dests=("${templates[@]/%.yglu.yml/.yml}")
+  }
+
+  for ((i = 0; i < ${#templates[@]}; i++)); do
+    local t="${templates[$i]}"
+    local d="${dests[$i]}"
+    echo "$t -> $d" >&2
+    process_template "$t" "$d"
+  done
+}
+
+trap 'rm "${tmpfiles[@]}" 2>/dev/null || true' EXIT
+
+main "$@"
