@@ -1,11 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Helper for yglu to assist with importing yaml files into the document
 # root.
 #
 # Depends: yglu - https://github.com/lbovet/yglu/
 #
-# Copyright (c) 2020-2021 Maddison Hellstrom <github.com/b0o>, MIT License.
+# Copyright (c) 2020-2022 Maddison Hellstrom <github.com/b0o>, MIT License.
 
 set -euo pipefail
 
@@ -45,7 +45,7 @@ function process_template() {
   tmpfiles+=("$tmp_dest")
 
   local -a yglu_import
-  mapfile -t yglu_import << "EOF"
+  mapfile -t yglu_import <<"EOF"
 # Merge imports with each other
 # primitives, lists: replace, later take precedence
 # dicts:             merge, contained primitives and lists handled as above
@@ -55,11 +55,11 @@ _imported: !-
 EOF
 
   if [[ $merge_lists -eq 1 ]]; then
-    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+    mapfile -tO ${#yglu_import[@]} yglu_import <<"EOF"
       !? $[0]: !? ({result => $[1]}).mergeWith({result => $_._imported.get($[0], null)}, $2 + $1, $1).get("result", null)
 EOF
   else
-    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+    mapfile -tO ${#yglu_import[@]} yglu_import <<"EOF"
       !if isDict($[1]):
         !? $[0]: !? ({result => $[1]}).mergeWith({result => $_._imported.get($[0], null)}, $1, $1).get("result", null)
       !if not isDict($[1]):
@@ -67,7 +67,7 @@ EOF
 EOF
   fi
 
-  mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+  mapfile -tO ${#yglu_import[@]} yglu_import <<"EOF"
 # Merge aggregated imports with document root
 # primitives, lists: values in document root take precedence
 # dicts:             merge, values in document root take precedence, contained primitives and lists handled as above
@@ -79,11 +79,11 @@ EOF
 EOF
 
   if [[ $merge_lists -eq 1 ]]; then
-    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+    mapfile -tO ${#yglu_import[@]} yglu_import <<"EOF"
       !? $[0]: !? ({result => $_.get($[0], null)}).mergeWith({result => $[1]}, $2 + $1, $1).get("result", null)
 EOF
   else
-    mapfile -tO ${#yglu_import[@]} yglu_import << "EOF"
+    mapfile -tO ${#yglu_import[@]} yglu_import <<"EOF"
     !if isDict($[1]):
       !? $[0]: !? ({result => $_.get($[0], null)}).mergeWith({result => $[1]}, $1, $1).get("result", null)
 EOF
@@ -91,14 +91,14 @@ EOF
 
   awk -v "import=$(printf '%s\n' "${yglu_import[@]}")" \
     '/^_import:\s+!\(\)\s*$/ { print import "\n" }; //{ print $0 }' "$1" \
-    > "$tmp_template"
+    >"$tmp_template"
 
-  yglu "$tmp_template" > "$tmp_dest" || {
+  yglu "$tmp_template" >"$tmp_dest" || {
     echo "yglu failed" >&2
     return 1
   }
 
-  cat "$tmp_dest" > "$dest"
+  cat "$tmp_dest" >"$dest"
   return
 }
 
@@ -147,7 +147,7 @@ function main() {
   }
 
   [[ ${#templates[@]} -eq 0 && ${#dests[@]} -eq 0 ]] && {
-    mapfile -t templates <<< "$(find . -maxdepth 1 -type f -name '*.yglu.yml' -printf '%f\n')"
+    mapfile -t templates <<<"$(find . -maxdepth 1 -type f -name '*.yglu.yml' -printf '%f\n')"
     dests=("${templates[@]/%.yglu.yml/.yml}")
   }
 
